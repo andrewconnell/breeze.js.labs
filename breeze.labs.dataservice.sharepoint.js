@@ -1,7 +1,7 @@
 ﻿/*
  * Breeze Labs SharePoint 2013 OData DataServiceAdapter
  *
- *  v.0.2.3
+ *  v.0.2.3.1
  *
  * Registers a SharePoint 2013 OData DataServiceAdapter with Breeze
  * 
@@ -22,6 +22,9 @@
  *
  *    // provide method returning value for the SP OData 'X-RequestDigest' header
  *    dsAdapter.getRequestDigest = function(){return securityService.requestDigest}
+ *
+ *    // configure SharePoint version for breeze (2013 is default, 2010): SP2013, SP2010
+ *    dsAdapter.spVersion = "SP2010";
  *
  * This adapter has its own JsonResultsAdapter which you could replace.
  * 
@@ -66,6 +69,8 @@
         this.name = "SharePointOData";
     };
     ctor.prototype.initialize = typeInitialize;
+    // default value is SharePoint 2013 on-prem
+    ctor.prototype.spVersion = "SP2013";
 
     function typeInitialize() {
         // Delay setting the prototype until we're sure AbstractRestDataServiceAdapter is loaded
@@ -103,7 +108,21 @@
     }
 
     function clientTypeNameToServerDefault(clientTypeName) {
-        return 'SP.Data.' + clientTypeName + 'sListItem';
+        // map javascript type names to SharePoint types
+        // depends on the SharePoint version
+        var version = this.getSharePointVersion();
+        switch (version) {
+            case "SP2010":
+                // SharePoint 2010
+                return "Microsoft.SharePoint.DataService." + clientTypeName + "sItem";
+                //case "SPO":
+                //    // SharePoint Online
+                //    // Not currently in use, requires some work wrt. authentication
+                //    return 'SP.Data.' + clientTypeName + 'sItem';
+            default:
+                // SharePoint 2013 on-prem
+                return 'SP.Data.' + clientTypeName + 'sListItem';
+        }
     }
 
     function _createErrorFromResponse(response, url) {
@@ -150,6 +169,10 @@
             name: dataServiceAdapter.name + "_default",
             visitNode: visitNode
         });
+
+        jsonResultsAdapter.getSharePointVersion = function () {
+            return dataServiceAdapter.spVersion;
+        };
 
         jsonResultsAdapter.clientTypeNameToServer = clientTypeNameToServerDefault;
         jsonResultsAdapter.serverTypeNameToClient = serverTypeNameToClientDefault;
@@ -199,7 +222,9 @@
                 // ASSUME if #-of-properties on node is >= #-of-props for the type 
                 // that this is the full entity and not a partial projection. 
                 // Therefore we declare that we've received an entity 
-                if (entityType._mappedPropertiesCount <= Object.keys(node).length - 1) {
+                // Did not work with navigation properties, bug-fixed.
+                // Original code: if (entityType._mappedPropertiesCount <= Object.keys(node).length - 1) {
+                if (entityType.dataProperties.length <= Object.keys(node).length - 1) {
                     result.entityType = entityType;
                     result.extra = metadata;
 
@@ -343,9 +368,10 @@
     }
 
     function serverTypeNameToClientDefault(serverTypeName) {
-        // strip off leading 'SP.Data.' and trailing 'sListItem'
-        var re = /^(SP\.Data.)(.*)(sListItem)$/;
-        var typeName = serverTypeName.replace(re, '$2');
+        // strip off SharePoint namespace and suffix for the data types
+        // matches these SharePoint versions: SharePoint 2013 on-prem | SharePoint Online | SharePoint 2010.
+        var re = /^(SP.Data.)(.*)(sListItem)$|^(SP.Data.)(.*)(sItem)$|^(Microsoft.SharePoint.DataService.)(.*)(sItem)$/m;
+        var typeName = serverTypeName.replace(re, '$2$5$8');
 
         return breeze.MetadataStore.normalizeTypeName(typeName);
     }
